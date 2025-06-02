@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
-import connectDB from "@/lib/mongodb"
-import Campaign from "@/models/Campaign"
-import Customer from "@/models/Customer"
-import CommunicationLog from "@/models/CommunicationLog"
+
+// Mock campaigns database
+const campaigns: any[] = []
+const communicationLogs: any[] = []
 
 export async function GET(request: Request) {
   const session = await getServerSession()
@@ -12,21 +12,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  try {
-    await connectDB()
+  // Sort campaigns by creation date (most recent first)
+  const sortedCampaigns = campaigns.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
-    const campaigns = await Campaign.find({}).sort({ createdAt: -1 }).lean()
-
-    return NextResponse.json({
-      campaigns: campaigns.map((campaign) => ({
-        ...campaign,
-        id: campaign._id.toString(),
-      })),
-    })
-  } catch (error) {
-    console.error("Error fetching campaigns:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
-  }
+  return NextResponse.json({ campaigns: sortedCampaigns })
 }
 
 export async function POST(request: Request) {
@@ -37,104 +26,88 @@ export async function POST(request: Request) {
   }
 
   try {
-    await connectDB()
-
     const { name, message, rules, audienceSize } = await request.json()
 
-    if (!name || !message || !rules || rules.length === 0) {
-      return NextResponse.json({ error: "Name, message, and rules are required" }, { status: 400 })
-    }
-
-    const newCampaign = new Campaign({
+    const campaignId = Math.random().toString(36).substr(2, 9)
+    const campaign = {
+      id: campaignId,
       name,
       message,
       rules,
       audienceSize,
       status: "sending",
+      createdAt: new Date(),
       sentCount: 0,
       failedCount: 0,
-    })
-
-    const savedCampaign = await newCampaign.save()
-
-    // Start message delivery simulation
-    setTimeout(async () => {
-      await simulateMessageDelivery(savedCampaign._id.toString(), audienceSize, message)
-    }, 1000)
-
-    return NextResponse.json(
-      {
-        ...savedCampaign.toObject(),
-        id: savedCampaign._id.toString(),
-      },
-      { status: 201 },
-    )
-  } catch (error) {
-    console.error("Error creating campaign:", error)
-
-    if (error.name === "ValidationError") {
-      return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    campaigns.push(campaign)
+
+    // Simulate message delivery
+    setTimeout(async () => {
+      await simulateMessageDelivery(campaignId, audienceSize, message)
+    }, 1000)
+
+    return NextResponse.json(campaign, { status: 201 })
+  } catch (error) {
+    return NextResponse.json({ error: "Invalid JSON data" }, { status: 400 })
   }
 }
 
 async function simulateMessageDelivery(campaignId: string, audienceSize: number, message: string) {
-  try {
-    await connectDB()
+  const campaign = campaigns.find((c) => c.id === campaignId)
+  if (!campaign) return
 
-    const campaign = await Campaign.findById(campaignId)
-    if (!campaign) return
+  // Mock customer data for delivery simulation
+  const mockCustomers = Array.from({ length: audienceSize }, (_, i) => ({
+    id: `customer_${i + 1}`,
+    name: `Customer ${i + 1}`,
+    email: `customer${i + 1}@example.com`,
+  }))
 
-    // Get customers based on campaign rules (simplified - you can implement complex rule evaluation)
-    const customers = await Customer.find({}).limit(audienceSize).lean()
+  let sentCount = 0
+  let failedCount = 0
 
-    let sentCount = 0
-    let failedCount = 0
+  for (const customer of mockCustomers) {
+    // Simulate 90% success rate
+    const isSuccess = Math.random() > 0.1
+    const personalizedMessage = message.replace("{name}", customer.name)
 
-    for (const customer of customers) {
-      // Simulate 90% success rate
-      const isSuccess = Math.random() > 0.1
-      const personalizedMessage = message.replace("{name}", customer.name)
-
-      // Create communication log entry
-      const logEntry = new CommunicationLog({
-        campaignId,
-        customerId: customer._id.toString(),
-        customerName: customer.name,
-        customerEmail: customer.email,
-        message: personalizedMessage,
-        status: isSuccess ? "sent" : "failed",
-        sentAt: new Date(),
-      })
-
-      await logEntry.save()
-
-      if (isSuccess) {
-        sentCount++
-      } else {
-        failedCount++
-      }
-
-      // Simulate delivery delay
-      await new Promise((resolve) => setTimeout(resolve, 100))
+    // Create communication log entry
+    const logEntry = {
+      id: Math.random().toString(36).substr(2, 9),
+      campaignId,
+      customerId: customer.id,
+      customerName: customer.name,
+      customerEmail: customer.email,
+      message: personalizedMessage,
+      status: isSuccess ? "sent" : "failed",
+      sentAt: new Date(),
     }
 
-    // Update campaign status
-    await Campaign.findByIdAndUpdate(campaignId, {
-      status: "completed",
-      sentCount,
-      failedCount,
-    })
+    communicationLogs.push(logEntry)
 
-    console.log(`Campaign ${campaignId} completed: ${sentCount} sent, ${failedCount} failed`)
-  } catch (error) {
-    console.error("Error in message delivery simulation:", error)
+    if (isSuccess) {
+      sentCount++
+    } else {
+      failedCount++
+    }
 
-    // Update campaign status to failed
-    await Campaign.findByIdAndUpdate(campaignId, {
-      status: "failed",
-    })
+    // Simulate delivery receipt API call
+    await simulateDeliveryReceipt(logEntry)
   }
+
+  // Update campaign status
+  campaign.status = "completed"
+  campaign.sentCount = sentCount
+  campaign.failedCount = failedCount
+}
+
+async function simulateDeliveryReceipt(logEntry: any) {
+  // Simulate delay for delivery receipt
+  setTimeout(() => {
+    // In a real implementation, this would be called by the vendor API
+    // For now, we just log the delivery
+    console.log(`Delivery receipt: ${logEntry.status} for ${logEntry.customerEmail}`)
+  }, Math.random() * 2000)
 }

@@ -1,7 +1,30 @@
 import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
-import connectDB from "@/lib/mongodb"
-import Order from "@/models/Order"
+
+// Mock orders database
+const orders: any[] = [
+  {
+    id: "1",
+    customerId: "1",
+    amount: 5000,
+    status: "completed",
+    createdAt: new Date("2024-01-15"),
+  },
+  {
+    id: "2",
+    customerId: "2",
+    amount: 3500,
+    status: "completed",
+    createdAt: new Date("2023-12-20"),
+  },
+  {
+    id: "3",
+    customerId: "1",
+    amount: 10000,
+    status: "completed",
+    createdAt: new Date("2024-01-10"),
+  },
+]
 
 export async function GET(request: Request) {
   const session = await getServerSession()
@@ -10,29 +33,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  try {
-    await connectDB()
+  const { searchParams } = new URL(request.url)
+  const customerId = searchParams.get("customerId")
 
-    const { searchParams } = new URL(request.url)
-    const customerId = searchParams.get("customerId")
+  let filteredOrders = orders
 
-    let query = {}
-    if (customerId) {
-      query = { customerId }
-    }
-
-    const orders = await Order.find(query).sort({ createdAt: -1 }).lean()
-
-    return NextResponse.json({
-      orders: orders.map((order) => ({
-        ...order,
-        id: order._id.toString(),
-      })),
-    })
-  } catch (error) {
-    console.error("Error fetching orders:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  if (customerId) {
+    filteredOrders = orders.filter((order) => order.customerId === customerId)
   }
+
+  return NextResponse.json({ orders: filteredOrders })
 }
 
 export async function POST(request: Request) {
@@ -43,8 +53,6 @@ export async function POST(request: Request) {
   }
 
   try {
-    await connectDB()
-
     const body = await request.json()
     const { customerId, amount, status = "completed" } = body
 
@@ -52,28 +60,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Customer ID and amount are required" }, { status: 400 })
     }
 
-    const newOrder = new Order({
+    const newOrder = {
+      id: Math.random().toString(36).substr(2, 9),
       customerId,
       amount,
       status,
-    })
-
-    const savedOrder = await newOrder.save()
-
-    return NextResponse.json(
-      {
-        ...savedOrder.toObject(),
-        id: savedOrder._id.toString(),
-      },
-      { status: 201 },
-    )
-  } catch (error) {
-    console.error("Error creating order:", error)
-
-    if (error.name === "ValidationError") {
-      return NextResponse.json({ error: error.message }, { status: 400 })
+      createdAt: new Date(),
     }
 
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    orders.push(newOrder)
+
+    return NextResponse.json(newOrder, { status: 201 })
+  } catch (error) {
+    return NextResponse.json({ error: "Invalid JSON data" }, { status: 400 })
   }
 }
